@@ -1,0 +1,83 @@
+# Builds the web game (one dist/index.html) and an Android APK (Capacitor wrapper) on every push to main.
+# - Web:  deployed to the gh-pages branch (GitHub Pages → Settings → Pages → Branch: gh-pages).
+# - APK + web zip: attached to the rolling "latest" GitHub Release, and kept as workflow artifacts.
+name: Build web + APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build web
+        run: |
+          npm ci
+          npm run build
+          test "$(ls dist)" = "index.html"
+
+      - name: Deploy web to gh-pages
+        run: |
+          mkdir -p pages && cp dist/index.html pages/index.html && touch pages/.nojekyll
+          cd pages
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A && git commit -q -m "Deploy ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Create Android project (Capacitor)
+        run: |
+          npm i --no-save @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npx cap add android
+          # Portrait game, full screen; let the WebView draw edge to edge.
+          sed -i 's#<activity#<activity android:screenOrientation="portrait"#' android/app/src/main/AndroidManifest.xml
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk ../ThriftStore.apk
+
+      - name: Package web zip
+        run: cd dist && zip -q ../ThriftStore-web.zip index.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ThriftStore-${{ github.run_number }}
+          path: |
+            ThriftStore.apk
+            ThriftStore-web.zip
+
+      - name: Publish "latest" release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest ThriftStore.apk ThriftStore-web.zip \
+            --title "Thrift Store (build ${{ github.run_number }})" \
+            --notes "Auto build from ${GITHUB_SHA::7}. ThriftStore.apk = Android (debug-signed, install directly). ThriftStore-web.zip = the single-file web game." \
+            --target "$GITHUB_SHA"

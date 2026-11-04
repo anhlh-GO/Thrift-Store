@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>Thrift Store: Cleaning ASMR</title>
+  </head>
+  <body>
+<div id="stage">
+  <div id="game">
+
+    <!-- Splash -->
+    <section id="splash" class="screen active">
+      <img class="bgimg" data-src="img/ui/bg.webp" alt="">
+      <div class="splash-title">
+        <img class="tp" data-src="img/ui/t_thrift.webp" alt="Thrift Store">
+        <img class="tp" data-src="img/ui/t_cleaning.webp" alt="Cleaning">
+        <img class="tp" data-src="img/ui/t_asmr.webp" alt="ASMR">
+      </div>
+      <div class="splash-bottom">
+        <div class="loadbar"><div id="loadfill"></div></div>
+        <div id="loadtext">Loading...</div>
+      </div>
+    </section>
+
+    <!-- Main menu -->
+    <section id="menu" class="screen">
+      <img class="bgimg" id="menuBg" data-src="img/ui/bg.webp" alt="">
+      <div class="topbar">
+        <button class="pill" data-open="shopRatingPanel"><img data-src="img/ui/star.webp" alt=""><span class="v-rating"></span></button>
+        <button class="pill" data-open="shopTierPanel"><span class="lvl">LV</span><span class="v-level"></span></button>
+        <button class="pill" data-open="storePanel"><img data-src="img/ui/coin.webp" alt=""><span class="v-coins"></span><i class="plus">+</i></button>
+        <button class="pill" data-open="storePanel"><img data-src="img/ui/gem.webp" alt=""><span class="v-gems"></span><i class="plus">+</i></button>
+      </div>
+      <div class="menu-title">
+        <img data-src="img/ui/t_thrift.webp" alt="Thrift Store">
+        <img data-src="img/ui/t_cleaning.webp" alt="Cleaning">
+        <img data-src="img/ui/t_asmr.webp" alt="ASMR">
+        <div class="tier-name" id="tierName"></div>
+      </div>
+      <div class="menu-side left">
+        <button class="sidebtn" data-open="dailyPanel"><img data-src="img/ui/daily_goals.webp" alt=""><span>Daily Goals</span><b class="badge" id="goalBadge"></b></button>
+        <button class="sidebtn" data-open="powerPanel"><img data-src="img/ui/pu_widebrush.webp" alt=""><span>Power-Ups</span></button>
+      </div>
+      <div class="menu-side right">
+        <button class="sidebtn" id="decorateBtn"><img data-src="img/ui/hanger.webp" alt=""><img class="sidelabel" data-src="img/ui/btn_decorate.webp" alt="Decorate"><b class="badge" id="displayBadge"></b></button>
+        <button class="sidebtn" data-open="settingsPanel"><img data-src="img/ui/music.webp" alt=""><span>Settings</span></button>
+      </div>
+      <button id="playBtn" class="bigbtn green">PLAY</button>
+      <div class="menu-stats" id="menuStats"></div>
+    </section>
+
+    <!-- Cleaning -->
+    <section id="clean" class="screen">
+      <img class="bgimg" id="cleanBg" data-src="img/ui/bag_bg.webp" alt="">
+      <div class="topbar">
+        <button class="iconbtn" id="pauseBtn"><img data-src="img/ui/pause.webp" alt="Pause"></button>
+        <div class="pill"><img data-src="img/ui/star.webp" alt=""><span class="v-rating"></span></div>
+        <div class="pill"><img data-src="img/ui/coin.webp" alt=""><span class="v-coins"></span></div>
+        <div class="pill"><img data-src="img/ui/gem.webp" alt=""><span class="v-gems"></span></div>
+      </div>
+      <div class="item-head">
+        <img id="rarityTag" data-src="img/ui/rarity_common.webp" alt="">
+        <div id="itemName"></div>
+      </div>
+      <div class="stage-row">
+        <div class="stage-dots" id="stageDots"></div>
+        <div id="stageLabel"></div>
+      </div>
+      <div id="wipeBox">
+        <img id="nextImg" alt="">
+        <canvas id="wipeCanvas" width="512" height="512"></canvas>
+        <canvas id="fxCanvas" width="720" height="720"></canvas>
+        <div id="pct">0%</div>
+      </div>
+      <div class="meter-row">
+        <img data-src="img/ui/out_polish.webp" alt="" class="meter-icon">
+        <div class="meter"><div id="meterFill"></div><span id="meterText"></span></div>
+      </div>
+      <div class="powerups-row">
+        <button class="pubtn" data-pu="WideBrush"><img data-src="img/ui/pu_widebrush.webp" alt=""><b></b></button>
+        <button class="pubtn" data-pu="DeepClean"><img data-src="img/ui/pu_deepclean.webp" alt=""><b></b></button>
+      </div>
+      <div class="toolbar" id="toolbar"></div>
+      <img id="toolCursor" alt="">
+      <div id="hint"></div>
+    </section>
+
+    <!-- Decorate: the display room (DisplayRoomPanel). Slots are placed on the 9:16 room art, so the room
+         layer is positioned exactly like .bgimg and stays aligned on any screen height. -->
+    <section id="decorate" class="screen">
+      <img class="bgimg" id="roomBg" data-src="img/ui/room_1.webp" alt="">
+      <div id="room"><div id="slots"></div></div>
+      <div class="topbar deco-top">
+        <img class="deco-title" data-src="img/ui/btn_decorate.webp" alt="Decorate">
+        <button id="decoDone" class="donebtn"><img data-src="img/ui/btn_done.webp" alt="Done"></button>
+      </div>
+      <div class="tray">
+        <img class="tray-label" data-src="img/ui/your_items.webp" alt="Your Items">
+        <button class="tray-arrow" id="trayLeft"><img data-src="img/ui/arrow_l.webp" alt="Scroll left"></button>
+        <div class="tray-scroll" id="trayScroll"><div class="tray-content" id="trayContent"></div></div>
+        <button class="tray-arrow" id="trayRight"><img data-src="img/ui/arrow_r.webp" alt="Scroll right"></button>
+        <div class="tray-empty" id="trayEmpty">Clean items and tap “Keep for Display” to fill your shop.</div>
+      </div>
+      <img id="dragGhost" alt="">
+      <div class="deco-sell" id="decoSell">
+        <div class="deco-sell-card">
+          <button class="closebtn" id="decoSellClose"><img data-src="img/ui/close.webp" alt="Close"></button>
+          <img id="decoSellIcon" alt="">
+          <img id="decoSellRarity" class="rtag" alt="">
+          <div class="cname" id="decoSellName"></div>
+          <button class="bigbtn orange" id="decoSellBtn"></button>
+          <button class="bigbtn blue" id="decoReturnBtn">Back to tray</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast"></div>
+    <div id="overlay"></div>
+
+    <!-- Panels (BasePanel show/hide styles applied in JS) -->
+    <div class="panel" id="cleanedPanel">
+      <div class="card glow">
+        <img class="rays" data-src="img/ui/rays.webp" alt="">
+        <img class="banner" data-src="img/ui/all_clean.webp" alt="All Clean!">
+        <div class="itemframe"><img id="cleanedImg" alt=""></div>
+        <img id="cleanedRarity" class="rtag" alt="">
+        <div class="cname" id="cleanedName"></div>
+        <div class="row2">
+          <button class="bigbtn orange" id="sellBtn">Sell Item<small>Earn coins now</small></button>
+          <button class="bigbtn green" id="keepBtn">Keep for Display<small>Boost your shop rating</small></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="hagglePanel">
+      <div class="card">
+        <div class="ptitle">Make an Offer</div>
+        <div class="haggle-top">
+          <div class="itemframe small"><img id="haggleImg" alt=""></div>
+          <div class="buyer">
+            <img id="reactionImg" data-src="img/ui/face_fair.webp" alt="">
+            <div class="bubble" id="reactionText">Hmm, let's see…</div>
+          </div>
+        </div>
+        <div class="offerline">
+          <div>Buyer offer<b id="buyerOffer"></b></div>
+          <div>Your price<b id="askPrice"></b></div>
+        </div>
+        <div class="slider-wrap">
+          <div class="track" id="priceTrack"><div class="zone fair"></div><div class="zone high"></div><div class="zone toohigh"></div>
+            <div id="offerMarker"></div><div id="priceKnob"></div></div>
+        </div>
+        <div class="row3">
+          <button class="roundbtn" id="nudgeDown">−</button>
+          <button class="bigbtn orange" id="lockBtn">Lock In Offer</button>
+          <button class="roundbtn" id="nudgeUp">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" id="salePanel">
+      <div class="card">
+        <img id="saleBanner" class="banner" data-src="img/ui/deal_great.webp" alt="">
+        <div class="sale-mid">
+          <div class="itemframe small"><img id="saleImg" alt=""></div>
+          <div class="buyer"><img id="saleAvatar" data-src="img/ui/avatar.webp" alt=""><div class="bubble" id="saleBubble"></div></div>
+        </div>
+        <div class="sale-coins"><img data-src="img/ui/coins_pile.webp" alt=""><span id="saleCoins"></span></div>
+        <div class="sale-rating" id="saleRating"></div>
+        <div class="flavor" id="saleFlavor"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="pausePanel">
+      <div class="card">
+        <div class="ptitle"><img class="leaf" data-src="img/ui/leaf_l.webp" alt="">Paused<img class="leaf" data-src="img/ui/leaf_r.webp" alt=""></div>
+        <button class="bigbtn green" id="resumeBtn">Resume</button>
+        <button class="bigbtn blue" id="restartBtn">Restart Item</button>
+        <button class="bigbtn orange" id="homeBtn">Home</button>
+      </div>
+    </div>
+
+    <div class="panel" id="polishPanel">
+      <div class="card">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Out of Polish!</div>
+        <img class="art" data-src="img/ui/out_polish.webp" alt="">
+        <div class="meter big"><div id="polishFill"></div></div>
+        <div class="ptext" id="polishTimer"></div>
+        <button class="bigbtn green" id="adRefillBtn">Watch Ad for Full Refill</button>
+        <button class="bigbtn blue" id="gemRefillBtn"></button>
+      </div>
+    </div>
+
+    <div class="panel" id="powerPanel">
+      <div class="card tall">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Power-Ups</div>
+        <div class="list" id="powerList"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="dailyPanel">
+      <div class="card tall">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Daily Goals</div>
+        <div class="list" id="goalList"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="shopTierPanel">
+      <div class="card tall">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Shop Upgrades</div>
+        <div class="list" id="tierList"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="shopRatingPanel">
+      <div class="card">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Shop Rating</div>
+        <div class="rating-big"><img data-src="img/ui/star.webp" alt=""><span class="v-rating"></span></div>
+        <div class="ptext" id="ratingInfo"></div>
+      </div>
+    </div>
+
+    <div class="panel" id="storePanel">
+      <div class="card tall">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Shop</div>
+        <div class="list">
+          <div class="row-card"><img data-src="img/ui/coins_pile.webp" alt=""><div><b>Pile of Coins</b><small>+1,000 coins</small></div><button class="smallbtn green" data-buy="coins">FREE</button></div>
+          <div class="row-card"><img data-src="img/ui/gems_pile.webp" alt=""><div><b>Handful of Gems</b><small>+10 gems</small></div><button class="smallbtn green" data-buy="gems">FREE</button></div>
+          <div class="row-card"><img data-src="img/ui/treasure.webp" alt=""><div><b>Treasure Bundle</b><small>+3,000 coins, +25 gems</small></div><button class="smallbtn green" data-buy="bundle">FREE</button></div>
+        </div>
+        <div class="ptext">Demo build: purchases are free.</div>
+      </div>
+    </div>
+
+
+    <div class="panel" id="settingsPanel">
+      <div class="card">
+        <button class="closebtn"><img data-src="img/ui/close.webp" alt="Close"></button>
+        <div class="ptitle">Settings</div>
+        <div class="row-card"><div><b>Music</b></div><button class="toggle" data-toggle="music"></button></div>
+        <div class="row-card"><div><b>Sound Effects</b></div><button class="toggle" data-toggle="sfx"></button></div>
+        <div class="row-card"><div><b>Vibration</b></div><button class="toggle" data-toggle="vibe"></button></div>
+        <button class="bigbtn orange" id="resetBtn">Reset Progress</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
