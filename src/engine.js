@@ -305,10 +305,10 @@ function refreshPolish() {
   S.polish = Math.min(cap, S.polish + dt * cap / C.polishFullRefillSeconds); S.polishTime = Date.now();
 }
 function drawMeter() {
-  // Shown as a bar that FILLS as polish is used (0% = fresh, 100% = out of polish → refill panel).
+  // Polish left: starts full (100%) and drains as you clean; at 0% the refill panel opens.
   // Called on every scrub frame: touch the DOM only when what is shown actually changes.
-  const cap = meterCap(), f = clamp(S.polish / cap, 0, 1), used = 1 - f;
-  const w = Math.round(used * 500) / 5, pct = Math.floor(used * 100), low = f < .2, m = drawMeter;
+  const cap = meterCap(), f = clamp(S.polish / cap, 0, 1);
+  const w = Math.round(f * 500) / 5, pct = Math.ceil(f * 100), low = f < .2, m = drawMeter;
   if (w !== m.w) { m.w = w; meterFill.style.width = w + "%"; }
   if (pct !== m.pct) { m.pct = pct; meterText.textContent = `Polish ${pct}%`; }
   if (low !== m.low) { m.low = low; meterBox.classList.toggle("low", low); }
@@ -404,6 +404,15 @@ function loadImg(src) {
 // The wipe canvas is drawn on every scrub frame and read only every 150 ms (via the 64px mask below),
 // so keep it GPU-backed: willReadFrequently would force the whole 512px canvas onto the CPU.
 const wipe = $("#wipeCanvas"), wctx = wipe.getContext("2d");
+// reveal: where the tool has passed this stage; nextCanvas = next stage art clipped to it
+const reveal = document.createElement("canvas"); reveal.width = reveal.height = 512;
+const rctx = reveal.getContext("2d"), nctx = $("#nextCanvas").getContext("2d"), nextImgEl = $("#nextImg");
+function drawNext() {
+  if (!R || !R.next) return;
+  nctx.globalCompositeOperation = "copy"; nctx.drawImage(reveal, 0, 0);
+  nctx.globalCompositeOperation = "source-in"; nctx.drawImage(R.next, ...R.nextRect);
+  nctx.globalCompositeOperation = "source-over";
+}
 const fx = $("#fxCanvas"), fctx = fx.getContext("2d");
 const MASK = 64; const mcan = document.createElement("canvas"); mcan.width = mcan.height = MASK; const mctx = mcan.getContext("2d", { willReadFrequently: true });
 let R = null; // current round
@@ -446,6 +455,7 @@ async function startItem(item, token) {
   hud(); drawMeter(); buildToolbar(); updatePU();
   sfx(item.tier === "Rare" ? "RareFound" : item.tier === "Uncommon" ? "UncommonFound" : "ItemSpawn");
   item.stages.forEach(s => loadImg(U("img/items/" + s)));
+  nextImgEl.style.opacity = 0; nctx.clearRect(0, 0, 512, 512);  // no flash of the previous item's art
   await setStage(0, true);
   if (token !== levelToken) return;  // another startLevel came in while the images loaded
   const box = $("#wipeBox");
@@ -453,14 +463,19 @@ async function startItem(item, token) {
   stagger([$(".item-head"), $(".stage-row"), $(".meter-row"), $(".toolbar")], { baseDelay: .05, step: .06, duration: .4, dist: 26 });
   R.busy = false;
   hooks.levelStart(LEVEL);  // the board is playable
-  if (S.itemsCleaned === 0) hint("Drag the brush over the item to scrub it!");
+  tutShow(.8);
 }
 async function setStage(i, first) {
   const round = R;
   R.stage = i; R.revealed = 0; R.base = null; R.wide = false; updatePU();
   const [top, next] = await Promise.all([loadImg(U("img/items/" + R.item.stages[i])), loadImg(U("img/items/" + R.item.stages[i + 1]))]);
   if (R !== round) return;  // the level changed while loading: do not paint the old item
-  $("#nextImg").src = next.src;
+  // Next stage art shows ONLY where the tool has passed (e.g. foam appears where you spray), never as a
+  // halo around the current layer; the full image (#nextImg) fades in when the stage completes.
+  nextImgEl.src = next.src; nextImgEl.style.opacity = 0;
+  const ns = Math.min(512 / next.width, 512 / next.height);
+  R.next = next; R.nextRect = [(512 - next.width * ns) / 2, (512 - next.height * ns) / 2, next.width * ns, next.height * ns];
+  rctx.clearRect(0, 0, 512, 512); nctx.clearRect(0, 0, 512, 512);
   wctx.globalCompositeOperation = "source-over"; wctx.globalAlpha = 1;
   wctx.clearRect(0, 0, 512, 512);
   const s = Math.min(512 / top.width, 512 / top.height), w = top.width * s, h = top.height * s;
@@ -488,7 +503,11 @@ function buildToolbar() {
 }
 function hint(msg) {
   const h = $("#hint"); h.textContent = msg; h.style.opacity = 1;
-  clearTimeout(h._t); h._t = setTimeout(() => tween(.4, "Linear", k => h.style.opacity = 1 - k), 3500);
+  clearTimeout(h._t); h._t = setTimeout(() => {
+    tween(.4, "Linear", k => h.style.opacity = 1 - k, () => {
+      if (h.classList.contains("tut") && R && S.itemsCleaned === 0) { h.textContent = TUT_TEXT[R.stage]; h.style.opacity = 1; }  // back to the tutorial step
+    });
+  }, 3500);
 }
 
 /* pointer handling: press a tool (or the item) and drag; ranged tools work above the finger */
@@ -504,11 +523,34 @@ function placeCursor(g) {
   const sc = t.key === "towel" ? .55 : t.key === "brush" ? .8 : 1;
   const cw = w * sc, ch = h * sc;
   if (cursor._w !== cw || cursor._h !== ch) { cursor._w = cw; cursor._h = ch; cursor.style.width = cw + "px"; cursor.style.height = ch + "px"; }
-  // ranged tools: nozzle tip sits rangedTipAnchorY above the finger
+  // ranged tools: the cleaning point sits rangedTipAnchorY above the finger; the nozzle is JET_GAP below
+  // that point and the water jet / foam mist bridges the gap
   const tipX = g.x, tipY = g.y - (t.ranged ? t.tipY : 0);
   // `translate` (not left/top): compositor-only move, and it is applied outside the pick-up `scale` tween
-  cursor.style.translate = `${tipX - cw / 2}px ${t.ranged ? tipY : tipY - ch / 2}px`;
+  cursor.style.translate = `${tipX - cw / 2}px ${t.ranged ? tipY + JET_GAP : tipY - ch / 2}px`;
+  if (t.ranged) jet.style.translate = `${tipX - jet._w / 2}px ${tipY - JET_OVER}px`;
   return { x: tipX, y: tipY };
+}
+/* Water jet (hose) / foam mist (sprayer): the fx_spray sprite stretched from the nozzle up to the
+   cleaning point, flickering every frame while the tool is held. */
+const jet = $("#sprayJet"), JET_GAP = 95, JET_OVER = 30;
+let jetRaf = 0;
+function jetOn(t) {
+  const hose = t.key === "hose";
+  jet._w = hose ? 64 : 120; jet._hose = hose;
+  jet.style.width = jet._w + "px"; jet.style.height = JET_GAP + JET_OVER + "px";
+  jet.style.display = "block";
+  if (!jetRaf) jetRaf = requestAnimationFrame(jetTick);
+}
+function jetOff() { jet.style.display = "none"; cancelAnimationFrame(jetRaf); jetRaf = 0; }
+function jetTick() {
+  const hose = jet._hose;
+  // hose: tight bright jet that pulses in length; sprayer: wide soft mist
+  const sx = (Math.random() < .5 ? -1 : 1) * (hose ? rand(.8, 1.15) : rand(.9, 1.3));
+  const sy = hose ? rand(.9, 1.08) : rand(.75, 1);
+  jet.style.scale = `${sx} ${sy}`;
+  jet.style.opacity = hose ? rand(.8, 1) : rand(.6, .85);
+  jetRaf = requestAnimationFrame(jetTick);
 }
 // Native image drag fires pointercancel and drops the tool, so block it everywhere.
 document.addEventListener("dragstart", e => e.preventDefault());
@@ -532,7 +574,8 @@ $("#clean").addEventListener("pointerdown", e => {
   $$(".tool")[R.stage].classList.add("held");
   kill(cursor._tw); cursor._tw = tween(.18, "OutBack", k => cursor.style.scale = lerp(.6, 1, k));
   sfx("DragPickup"); if (S.settings.sfx) playClip("pop", .7);
-  if (S.itemsCleaned === 0 && g.y > 960) hint(t.ranged ? "Drag up — it sprays above your finger" : "Drag it over the item");
+  if (t.ranged) jetOn(t);
+  tutStop();
   move(g);
 });
 // Touch screens fire pointermove up to 120-240x a second; draw at most once per frame with the latest
@@ -556,8 +599,61 @@ function endDrag() {
   if (moveRaf) { cancelAnimationFrame(moveRaf); flushMove(); }  // paint the last queued point first
   if (!R.dragging) return;  // that last point emptied the polish and already ended the drag
   R.dragging = false; R.pointer = null; cursor.style.display = "none"; loopOff(TOOLS[R.stage].loop);
+  jetOff();
   $$(".tool")[R.stage]?.classList.remove("held");
   updatePct();  // count the last stroke even if it was shorter than one sample interval
+  if (!R.busy) tutShow(1.2);  // tutorial: show the hand again if the player stops before the stage is done
+}
+
+/* ---------- Tutorial (first item only): a hand shows each tool's gesture, a bubble names the step ---------- */
+const TUT_TEXT = [
+  "Drag the Brush over the item to scrub off the dirt",
+  "Hold the Sprayer under the item — foam sprays out of the nozzle",
+  "Rinse the foam away with the Hose",
+  "Dry & polish it with the Towel",
+];
+const tutHand = $("#tutHand");
+let tutToken = 0;
+const tutOn = () => R && S.itemsCleaned === 0 && !R.busy && !R.dragging && !paused;
+function tutStop() {
+  tutToken++;
+  tutHand.style.display = "none"; tutHand.style.opacity = 0;
+}
+function tutEnd() {
+  tutStop();
+  const h = $("#hint"); h.classList.remove("tut"); h.style.opacity = 0;
+}
+async function tutShow(delay = .5) {
+  if (!R || S.itemsCleaned !== 0) return;
+  const token = ++tutToken;
+  const h = $("#hint");
+  clearTimeout(h._t); h.classList.add("tut"); h.textContent = TUT_TEXT[R.stage]; h.style.opacity = 1;
+  await wait(delay);
+  // the hand's fingertip is at (27, 9) in its 96x120 box
+  const place = (x, y) => { tutHand.style.translate = `${x - 27}px ${y - 9}px`; };
+  const step = (dur, ease, fn) => new Promise(r => tween(dur, ease, fn, r));
+  while (token === tutToken && R && S.itemsCleaned === 0) {
+    // paused, a panel open, or the stage is changing: hide the hand and check again shortly
+    if (!tutOn() || panelStack.length) { tutHand.style.display = "none"; await wait(.3); continue; }
+    const t = TOOLS[R.stage], slot = $$(".tool")[R.stage];
+    if (!slot) return;
+    const gr = game.getBoundingClientRect(), sr = slot.getBoundingClientRect();
+    const from = { x: (sr.left + sr.width / 2 - gr.left) / SCALE, y: (sr.top + sr.height * .45 - gr.top) / SCALE };
+    // finger target: item centre; ranged tools are held BELOW the item (the spray reaches up to it)
+    const bx = wipeBox.offsetLeft + 300, by = wipeBox.offsetTop + 300 + (t.ranged ? t.tipY : 0);
+    const to = { x: bx, y: Math.min(by, from.y - 40) };
+    tutHand.style.display = "block"; place(from.x, from.y);
+    await step(.25, "OutQuad", k => { tutHand.style.opacity = k; tutHand.style.scale = lerp(1.2, 1, k); });
+    if (token !== tutToken) return;
+    await step(.12, "OutQuad", k => { tutHand.style.scale = lerp(1, .88, k); });         // press
+    await step(.7, "InOutSine", k => place(lerp(from.x, to.x, k), lerp(from.y, to.y, k)));  // drag onto the item
+    if (token !== tutToken) return;
+    await step(1.3, "Linear", k => place(to.x + Math.sin(k * Math.PI * 4) * 120, to.y - Math.sin(k * Math.PI * 2) * 30));  // scrub
+    if (token !== tutToken) return;
+    await step(.25, "Linear", k => { tutHand.style.opacity = 1 - k; tutHand.style.scale = lerp(.88, 1, k); });
+    await wait(.45);
+  }
+  if (token === tutToken) tutHand.style.display = "none";
 }
 let lastSample = 0;
 const STAMPS = {};
@@ -584,12 +680,16 @@ function move(g) {
   for (let s = 1; s <= steps; s++) {
     const x = lerp(from.x, p.x, s / steps), y = lerp(from.y, p.y, s / steps);
     wctx.drawImage(stamp, x - rad, y - rad);
+    rctx.drawImage(stamp, x - rad, y - rad);
   }
   wctx.globalCompositeOperation = "source-over";
+  drawNext();
   R.last = p;
-  // polish drains with distance (meterDrainPerUnitDistance) — only while over the item
+  // CoreLoopController: polish -= distance moved over the item × meterDrainPerUnitDistance (0.004), distance
+  // measured in the 512px cleaning-mask space the brush works in (brushRadiusInMaskPixels); meter starts at
+  // cleaningMeterMax (400) and its capacity shrinks with shop level up to meterFullShrinkLevel (50).
   if (dist > 0) {
-    S.polish = Math.max(0, S.polish - dist * C.meterDrainPerUnitDistance * 1.2);
+    S.polish = Math.max(0, S.polish - dist * C.meterDrainPerUnitDistance);
     drawMeter();
     if (S.polish / meterCap() < .2 && !R.lowWarned) { R.lowWarned = true; sfx("MeterLow"); }
     if (S.polish <= 0) { endDrag(); sfx("MeterEmpty"); openPolish(); save(); return; }
@@ -614,12 +714,13 @@ function updatePct() {
 async function completeStage() {
   R.busy = true; endDrag();
   sfx("StageAdvance"); vibe(30);
-  await new Promise(r => tween(.3, "OutQuad", t => wipe.style.opacity = 1 - t, r));
+  tutStop();
+  await new Promise(r => tween(.3, "OutQuad", t => { wipe.style.opacity = 1 - t; nextImgEl.style.opacity = t; }, r));
   sparkleBurst();
-  if (R.stage >= 3) { await wait(.4); return itemCleaned(); }
+  if (R.stage >= 3) { await wait(.4); tutEnd(); return itemCleaned(); }
   await setStage(R.stage + 1);
   R.busy = false;
-  if (S.itemsCleaned === 0) hint(`Now use the ${TOOLS[R.stage].name}!`);
+  tutShow();
 }
 
 /* particles (Smoke / Particles / Water Particle / Drops from the Unity scene) */

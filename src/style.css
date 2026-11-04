@@ -74,7 +74,17 @@ button { font-family: inherit; color: inherit; border: 0; background: none; curs
 .stage-dots i.done { background: var(--gold); } .stage-dots i.cur { background: #fff; }
 #stageLabel { color: #fff; font-size: 28px; text-shadow: 0 2px 0 #000b; }
 #wipeBox { position: absolute; left: calc(60px + var(--exwh)); top: calc(290px + var(--exh)); width: 600px; height: 600px; }
-#nextImg, #wipeCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+#nextImg, #nextCanvas, #wipeCanvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* next stage art: revealed only where the tool has passed (#nextCanvas); the full image fades in when the stage completes */
+#nextImg { opacity: 0; }
+/* water jet / mist from the hose & sprayer nozzle: a stretched sprite, moved like the cursor (compositor only) */
+#sprayJet { position: absolute; left: 0; top: 0; width: 80px; height: 100px; pointer-events: none; display: none; z-index: 5;
+  transform-origin: 50% 100%; will-change: transform, opacity; filter: drop-shadow(0 0 6px #9fe3ff); }
+/* tutorial hand */
+#tutHand { position: absolute; left: 0; top: 0; width: 96px; height: 120px; pointer-events: none; z-index: 7; opacity: 0; display: none;
+  will-change: transform, opacity; filter: drop-shadow(0 6px 4px #0007); }
+#tutHand svg { width: 100%; height: 100%; display: block; }
+#hint.tut { left: calc(40px + var(--exwh)); right: calc(40px + var(--exwh)); padding: 14px 20px; border-radius: 26px; background: rgba(43,23,10,.86); border: 3px solid #f6d48c; font-size: 28px; line-height: 1.2; }
 #fxCanvas { position: absolute; left: -60px; top: -60px; width: 720px; height: 720px; pointer-events: none; }
 #pct { position: absolute; left: 0; top: -6px; z-index: 5; background: rgba(43,23,10,.8); color: #fff; border-radius: 18px; padding: 4px 14px; font-size: 26px; }
 .meter-row { position: absolute; top: calc(905px + var(--exh)); left: calc(40px + var(--exwh)); right: calc(40px + var(--exwh)); display: flex; align-items: center; gap: 10px; }
