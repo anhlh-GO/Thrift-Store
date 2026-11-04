@@ -22,8 +22,10 @@ button { font-family: inherit; color: inherit; border: 0; background: none; curs
   -webkit-mask-composite: source-in;
           mask-image: linear-gradient(transparent, #000 min(90px, var(--exh)), #000 calc(100% - min(90px, var(--exh))), transparent),
                       linear-gradient(90deg, transparent, #000 min(90px, var(--exwh)), #000 calc(100% - min(90px, var(--exwh))), transparent);
-          mask-composite: intersect; }
-.bgblur { position: absolute; left: -40px; top: -40px; width: calc(100% + 80px); height: calc(100% + 80px); object-fit: cover; pointer-events: none; filter: blur(22px) brightness(.72) saturate(1.1); }
+          mask-composite: intersect;
+  will-change: transform; /* own GPU layer: painted (and masked) once, not on every repaint above it */ }
+/* tiny pre-darkened thumbnail stretched up = cheap blur (see blurThumb in engine.js) */
+.bgblur { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; will-change: transform; }
 
 /* Splash */
 .splash-title { position: absolute; top: calc(300px + var(--exh)); left: 0; right: 0; display: flex; flex-direction: column; align-items: center; gap: 6px; }
@@ -95,7 +97,8 @@ button { font-family: inherit; color: inherit; border: 0; background: none; curs
 .tool.done::after { content: "✓"; position: absolute; top: 4px; right: 8px; width: 38px; height: 38px; border-radius: 50%; background: var(--green); color: #fff; font-size: 26px; line-height: 38px; }
 .tool.lockd { opacity: .45; }
 .tool.held img { opacity: 0; }
-#toolCursor { position: absolute; pointer-events: none; display: none; z-index: 6; transform-origin: 50% 50%; filter: drop-shadow(0 10px 8px #0006); }
+/* moved with transform (no layout), on its own layer so the drop-shadow is rasterized once per pick-up */
+#toolCursor { position: absolute; left: 0; top: 0; pointer-events: none; display: none; z-index: 6; transform-origin: 50% 50%; filter: drop-shadow(0 10px 8px #0006); will-change: transform; }
 #hint { position: absolute; left: 0; right: 0; bottom: calc(280px + var(--sab)); text-align: center; color: #fff; font-size: 30px; text-shadow: 0 3px 0 #000c; pointer-events: none; }
 
 /* Panels */

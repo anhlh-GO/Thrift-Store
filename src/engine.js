@@ -104,14 +104,42 @@ function snd(name) {
   if (!AUDIO[name]) { AUDIO[name] = new Audio(SND_URL(name)); AUDIO[name].preload = "auto"; }
   return AUDIO[name];
 }
+// One-shot SFX go through Web Audio: each clip is decoded ONCE into an AudioBuffer and replayed for free.
+// (Cloning an <audio> whose src is an inlined base64 mp3 re-decodes the whole file on every play — that
+// was a big source of stutter while scrubbing.) Falls back to <audio> until the buffer is ready.
+const ACtx = window.AudioContext || window.webkitAudioContext;
+const actx = ACtx ? new ACtx() : null;
+const BUF = {};
+function decodeClip(name) {
+  if (!actx || BUF[name]) return BUF[name];
+  BUF[name] = fetch(SND_URL(name)).then(r => r.arrayBuffer())
+    .then(ab => new Promise((res, rej) => actx.decodeAudioData(ab, res, rej)))
+    .then(b => (BUF[name] = b)).catch(() => (BUF[name] = null));
+  return BUF[name];
+}
+function playClip(name, vol, rate = 1) {
+  const b = BUF[name];
+  if (actx && b instanceof AudioBuffer && actx.state === "running") {
+    const src = actx.createBufferSource(), g = actx.createGain();
+    src.buffer = b; src.playbackRate.value = rate; g.gain.value = vol;
+    src.connect(g).connect(actx.destination); src.start();
+    return;
+  }
+  decodeClip(name);
+  const a = snd(name).cloneNode(); a.volume = vol; a.playbackRate = rate; a.play().catch(() => {});
+}
+// Browsers start audio only after a gesture: resume the context and decode every SFX clip in the background.
+addEventListener("pointerdown", () => {
+  if (!actx) return;
+  if (actx.state !== "running") actx.resume().catch(() => {});
+  if (!decodeClip.warm) { decodeClip.warm = true; [...new Set(Object.values(D.sfx).map(e => e.clip)), "pop"].forEach(decodeClip); }
+}, true);
 function sfx(id) {
   const e = D.sfx[id]; if (!e || !S.settings.sfx) return;
   const now = performance.now();
   if (lastPlay[id] && now - lastPlay[id] < e.cd * 1000) return;
   lastPlay[id] = now;
-  const a = snd(e.clip).cloneNode(); a.volume = clamp(e.vol, 0, 1);
-  if (e.pv) a.playbackRate = 1 + rand(-e.pv, e.pv);
-  a.play().catch(() => {});
+  playClip(e.clip, clamp(e.vol, 0, 1), e.pv ? 1 + rand(-e.pv, e.pv) : 1);
 }
 let music = null, musicName = null;
 function playMusic(name, vol) {
@@ -160,8 +188,11 @@ function punch(el) {
 // UIIdleLoop: Breathe (scale) / Float (y) / Sway (rotation)
 function idle(el, style, amplitude, period, delay = .8, jitter = .7) {
   const phase = Math.random() * jitter, t0 = performance.now() + delay * 1000;
+  const scr = el.closest(".screen");
   (function f(now) {
     if (!el.isConnected) return;
+    // Skip the style write while the element's screen is hidden (no restyle during gameplay).
+    if (scr && !scr.classList.contains("active")) { requestAnimationFrame(f); return; }
     const t = Math.max(0, now - t0) / 1000, s = Math.sin((t / period + phase) * Math.PI * 2);
     if (style === "Breathe") el.style.scale = 1 + amplitude * s;
     else if (style === "Float") el.style.translate = `0 ${amplitude * s}px`;
@@ -275,11 +306,14 @@ function refreshPolish() {
 }
 function drawMeter() {
   // Shown as a bar that FILLS as polish is used (0% = fresh, 100% = out of polish → refill panel).
+  // Called on every scrub frame: touch the DOM only when what is shown actually changes.
   const cap = meterCap(), f = clamp(S.polish / cap, 0, 1), used = 1 - f;
-  $("#meterFill").style.width = used * 100 + "%";
-  $("#meterText").textContent = `Polish ${Math.floor(used * 100)}%`;
-  $(".meter-row .meter").classList.toggle("low", f < .2);
+  const w = Math.round(used * 500) / 5, pct = Math.floor(used * 100), low = f < .2, m = drawMeter;
+  if (w !== m.w) { m.w = w; meterFill.style.width = w + "%"; }
+  if (pct !== m.pct) { m.pct = pct; meterText.textContent = `Polish ${pct}%`; }
+  if (low !== m.low) { m.low = low; meterBox.classList.toggle("low", low); }
 }
+const meterFill = $("#meterFill"), meterText = $("#meterText"), meterBox = $(".meter-row .meter");
 setInterval(() => {
   refreshPolish();
   if ($("#clean").classList.contains("active")) drawMeter();
@@ -291,16 +325,32 @@ function screen(id) {
   $$(".screen").forEach(s => s.classList.toggle("active", s.id === id));
 }
 
+const BLUR_CACHE = {};
+function blurThumb(src) {
+  if (!src) return Promise.resolve("");
+  return BLUR_CACHE[src] ||= loadImg(src).then(img => {
+    const c = document.createElement("canvas"); c.width = 27; c.height = 48;
+    const x = c.getContext("2d");
+    x.imageSmoothingQuality = "high";
+    x.drawImage(img, 0, 0, c.width, c.height);
+    x.fillStyle = "rgba(20,10,4,.3)"; x.fillRect(0, 0, c.width, c.height);  // darken like the old brightness(.72)
+    return c.toDataURL();
+  }).catch(() => src);
+}
+
 /* ---------- Splash (shown only until registerFalconGame calls startLevel) ---------- */
 function initView() {
   $$("img[data-src]").forEach(i => { i.src = U(i.dataset.src); });
-  // Tall screens: the 9:16 background stays whole and centered (.bgimg), and a blurred copy of the
-  // same art fills the extra band above and below it (.bgblur). The copy follows every src change.
+  // Tall/wide screens: the 9:16 background stays whole and centered (.bgimg), and a blurred copy of the
+  // same art fills the extra space around it (.bgblur). The "blur" is a tiny darkened thumbnail made once
+  // per image and stretched by the browser — no CSS filter, which re-ran on every repaint and cost frames.
   $$(".bgimg").forEach(bg => {
     const blur = document.createElement("img");
-    blur.className = "bgblur"; blur.alt = ""; blur.src = bg.src;
+    blur.className = "bgblur"; blur.alt = "";
     bg.before(blur);
-    new MutationObserver(() => { blur.src = bg.src; }).observe(bg, { attributes: true, attributeFilter: ["src"] });
+    const sync = () => blurThumb(bg.src).then(u => { blur.src = u; });
+    sync();
+    new MutationObserver(sync).observe(bg, { attributes: true, attributeFilter: ["src"] });
   });
   // SplashAnimator: title parts pop in one after another
   $$(".splash-title .tp").forEach((el, i) => setTimeout(() =>
@@ -351,7 +401,9 @@ function loadImg(src) {
   if (!IMG_CACHE[src]) IMG_CACHE[src] = new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
   return IMG_CACHE[src];
 }
-const wipe = $("#wipeCanvas"), wctx = wipe.getContext("2d", { willReadFrequently: true });
+// The wipe canvas is drawn on every scrub frame and read only every 150 ms (via the 64px mask below),
+// so keep it GPU-backed: willReadFrequently would force the whole 512px canvas onto the CPU.
+const wipe = $("#wipeCanvas"), wctx = wipe.getContext("2d");
 const fx = $("#fxCanvas"), fctx = fx.getContext("2d");
 const MASK = 64; const mcan = document.createElement("canvas"); mcan.width = mcan.height = MASK; const mctx = mcan.getContext("2d", { willReadFrequently: true });
 let R = null; // current round
@@ -441,17 +493,21 @@ function hint(msg) {
 
 /* pointer handling: press a tool (or the item) and drag; ranged tools work above the finger */
 const cursor = $("#toolCursor");
+const wipeBox = $("#wipeBox"); let boxOff = null;
 function boxPoint(g) { // game coords -> 512 canvas coords
-  const b = $("#wipeBox"); const x = (g.x - b.offsetLeft) / 600 * 512, y = (g.y - b.offsetTop) / 600 * 512; return { x, y };
+  // offsetLeft/Top force a layout; read them once per drag (they only change on resize), not per move
+  if (!boxOff) boxOff = { x: wipeBox.offsetLeft, y: wipeBox.offsetTop };
+  return { x: (g.x - boxOff.x) / 600 * 512, y: (g.y - boxOff.y) / 600 * 512 };
 }
 function placeCursor(g) {
   const t = TOOLS[R.stage], [w, h] = t.size;
   const sc = t.key === "towel" ? .55 : t.key === "brush" ? .8 : 1;
-  cursor.style.width = w * sc + "px"; cursor.style.height = h * sc + "px";
+  const cw = w * sc, ch = h * sc;
+  if (cursor._w !== cw || cursor._h !== ch) { cursor._w = cw; cursor._h = ch; cursor.style.width = cw + "px"; cursor.style.height = ch + "px"; }
   // ranged tools: nozzle tip sits rangedTipAnchorY above the finger
   const tipX = g.x, tipY = g.y - (t.ranged ? t.tipY : 0);
-  cursor.style.left = tipX - w * sc / 2 + "px";
-  cursor.style.top = (t.ranged ? tipY : tipY - h * sc / 2) + "px";
+  // `translate` (not left/top): compositor-only move, and it is applied outside the pick-up `scale` tween
+  cursor.style.translate = `${tipX - cw / 2}px ${t.ranged ? tipY : tipY - ch / 2}px`;
   return { x: tipX, y: tipY };
 }
 // Native image drag fires pointercancel and drops the tool, so block it everywhere.
@@ -470,26 +526,50 @@ $("#clean").addEventListener("pointerdown", e => {
   }
   if (S.polish <= 0) { openPolish(); return; }
   const t = TOOLS[R.stage];
-  R.dragging = true; R.pointer = e.pointerId; R.last = null;
+  R.dragging = true; R.pointer = e.pointerId; R.last = null; boxOff = null;
   try { $("#clean").setPointerCapture(e.pointerId); } catch {}
   cursor.src = U(`img/ui/tool_${t.key}.webp`); cursor.style.display = "block";
   $$(".tool")[R.stage].classList.add("held");
   kill(cursor._tw); cursor._tw = tween(.18, "OutBack", k => cursor.style.scale = lerp(.6, 1, k));
-  sfx("DragPickup"); const a = snd("pop").cloneNode(); if (S.settings.sfx) { a.volume = .7; a.play().catch(() => {}); }
+  sfx("DragPickup"); if (S.settings.sfx) playClip("pop", .7);
   if (S.itemsCleaned === 0 && g.y > 960) hint(t.ranged ? "Drag up — it sprays above your finger" : "Drag it over the item");
   move(g);
 });
-addEventListener("pointermove", e => { if (R && R.dragging && e.pointerId === R.pointer) move(toGame(e)); }, { passive: true });
+// Touch screens fire pointermove up to 120-240x a second; draw at most once per frame with the latest
+// point (move() interpolates the stroke from the previous point, so nothing is lost).
+let pendingMove = null, moveRaf = 0;
+function flushMove() {
+  moveRaf = 0;
+  const g = pendingMove; pendingMove = null;
+  if (g && R && R.dragging) move(g);
+}
+addEventListener("pointermove", e => {
+  if (!R || !R.dragging || e.pointerId !== R.pointer) return;
+  pendingMove = toGame(e);
+  if (!moveRaf) moveRaf = requestAnimationFrame(flushMove);
+}, { passive: true });
 addEventListener("pointerup", e => { if (R && e.pointerId === R.pointer) endDrag(); });
 addEventListener("pointercancel", e => { if (R && e.pointerId === R.pointer) endDrag(); });
 addEventListener("blur", () => endDrag());
 function endDrag() {
   if (!R || !R.dragging) return;
+  if (moveRaf) { cancelAnimationFrame(moveRaf); flushMove(); }  // paint the last queued point first
+  if (!R.dragging) return;  // that last point emptied the polish and already ended the drag
   R.dragging = false; R.pointer = null; cursor.style.display = "none"; loopOff(TOOLS[R.stage].loop);
   $$(".tool")[R.stage]?.classList.remove("held");
   updatePct();  // count the last stroke even if it was shorter than one sample interval
 }
 let lastSample = 0;
+const STAMPS = {};
+function brushStamp(rad) {
+  const key = Math.round(rad);
+  if (STAMPS[key]) return STAMPS[key];
+  const c = document.createElement("canvas"); c.width = c.height = key * 2;
+  const x = c.getContext("2d"), gr = x.createRadialGradient(key, key, 0, key, key, key);
+  gr.addColorStop(0, "rgba(0,0,0,.9)"); gr.addColorStop(.6, "rgba(0,0,0,.55)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+  x.fillStyle = gr; x.fillRect(0, 0, key * 2, key * 2);
+  return (STAMPS[key] = c);
+}
 function move(g) {
   const tip = placeCursor(g), p = boxPoint(tip), t = TOOLS[R.stage];
   const inside = p.x > -60 && p.x < 572 && p.y > -60 && p.y < 572;
@@ -500,11 +580,10 @@ function move(g) {
   const from = R.last || p, dist = Math.hypot(p.x - from.x, p.y - from.y);
   wctx.globalCompositeOperation = "destination-out";
   const steps = Math.max(1, Math.ceil(dist / (rad * .25)));
+  const stamp = brushStamp(rad);  // same soft radial falloff, rendered once instead of a gradient per step
   for (let s = 1; s <= steps; s++) {
     const x = lerp(from.x, p.x, s / steps), y = lerp(from.y, p.y, s / steps);
-    const gr = wctx.createRadialGradient(x, y, 0, x, y, rad);
-    gr.addColorStop(0, "rgba(0,0,0,.9)"); gr.addColorStop(.6, "rgba(0,0,0,.55)"); gr.addColorStop(1, "rgba(0,0,0,0)");
-    wctx.fillStyle = gr; wctx.beginPath(); wctx.arc(x, y, rad, 0, Math.PI * 2); wctx.fill();
+    wctx.drawImage(stamp, x - rad, y - rad);
   }
   wctx.globalCompositeOperation = "source-over";
   R.last = p;
@@ -547,8 +626,10 @@ async function completeStage() {
 const FX_IMG = {}; ["cloud", "splash", "foam", "spray"].forEach(k => loadImg(U(`img/ui/fx_${k}.webp`)).then(i => FX_IMG[k] = i));
 const parts = [];
 function spawnFx(kind, gx, gy) {
-  if (!kind) return;
-  const x = gx - 0, y = gy - 230; // fxCanvas offset (box left 60-60, top 290-60)
+  if (!kind || parts.length > 120) return;  // cap: a fast scrub must not pile up hundreds of sprites
+  // fxCanvas sits at the wipe box's top-left minus 60px; the box moves with the screen size (--ex/--exw)
+  const bx = boxOff ? boxOff.x : wipeBox.offsetLeft, by = boxOff ? boxOff.y : wipeBox.offsetTop;
+  const x = gx - (bx - 60), y = gy - (by - 60);
   if (kind === "cloud") parts.push({ img: "cloud", x, y, vx: rand(-40, 40), vy: rand(-60, -20), life: .7, t: 0, s: rand(40, 80), rot: rand(0, 6), a: .55, grow: 1.6, frame: Math.floor(rand(0, 4)) });
   if (kind === "foam") for (let i = 0; i < 2; i++) parts.push({ img: "foam", x: x + rand(-20, 20), y: y + rand(-20, 20), vx: rand(-90, 90), vy: rand(-90, 60), life: .6, t: 0, s: rand(26, 50), rot: rand(0, 6), a: .9, grow: .6 });
   if (kind === "water") for (let i = 0; i < 3; i++) parts.push({ img: "splash", x, y, vx: rand(-220, 220), vy: rand(-260, -40), g: 900, life: .55, t: 0, s: rand(30, 60), rot: rand(0, 6), a: .85, grow: .8 });
@@ -560,20 +641,27 @@ function sparkleBurst() {
   }
 }
 const starImg = new Image(); starImg.src = U("img/ui/star.webp");
-let lastF = performance.now();
+let lastF = performance.now(), fxDirty = false;
 (function fxLoop(now) {
   const dt = Math.min(.05, (now - lastF) / 1000); lastF = now;
-  fctx.clearRect(0, 0, 720, 720);
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const p = parts[i]; p.t += dt;
-    if (p.t >= p.life) { parts.splice(i, 1); continue; }
-    p.vy += (p.g || 0) * dt; p.x += p.vx * dt; p.y += p.vy * dt;
-    const k = p.t / p.life, img = p.img === "star" ? starImg : FX_IMG[p.img]; if (!img) continue;
-    const s = p.s * (1 + p.grow * k);
-    fctx.save(); fctx.globalAlpha = p.a * (1 - k); fctx.translate(p.x, p.y); fctx.rotate(p.rot + k);
-    if (p.img === "cloud") { const fw = img.width / 2, fh = img.height / 2; fctx.drawImage(img, (p.frame % 2) * fw, Math.floor(p.frame / 2) * fh, fw, fh, -s / 2, -s / 2, s, s); }
-    else fctx.drawImage(img, -s / 2, -s / 2, s, s);
-    fctx.restore();
+  if (parts.length || fxDirty) {  // idle frames (no particles, canvas already clear) cost nothing
+    fctx.setTransform(1, 0, 0, 1, 0, 0); fctx.globalAlpha = 1;
+    fctx.clearRect(0, 0, 720, 720);
+    let n = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i]; p.t += dt;
+      if (p.t >= p.life) continue;
+      parts[n++] = p;  // compact in place (no splice per dead particle)
+      p.vy += (p.g || 0) * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+      const k = p.t / p.life, img = p.img === "star" ? starImg : FX_IMG[p.img]; if (!img) continue;
+      const s = p.s * (1 + p.grow * k), r = p.rot + k, c = Math.cos(r), sn = Math.sin(r);
+      fctx.globalAlpha = p.a * (1 - k); fctx.setTransform(c, sn, -sn, c, p.x, p.y);
+      if (p.img === "cloud") { const fw = img.width / 2, fh = img.height / 2; fctx.drawImage(img, (p.frame % 2) * fw, Math.floor(p.frame / 2) * fh, fw, fh, -s / 2, -s / 2, s, s); }
+      else fctx.drawImage(img, -s / 2, -s / 2, s, s);
+    }
+    parts.length = n;
+    fctx.setTransform(1, 0, 0, 1, 0, 0);
+    fxDirty = n > 0;
   }
   requestAnimationFrame(fxLoop);
 })(lastF);
